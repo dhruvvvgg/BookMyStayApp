@@ -2,14 +2,11 @@
  * Main
  *
  * Hotel Booking Application
- * Demonstrates room modeling and centralized inventory management.
  *
- * UC1: Application entry and welcome message
+ * UC1: Application entry
  * UC2: Room abstraction and room types
  * UC3: Centralized inventory using HashMap
- *
- * @author Dhruv
- * @version 1.0
+ * UC4: Guest search for available rooms (read-only access)
  */
 
 import java.util.HashMap;
@@ -76,14 +73,13 @@ public class Main {
     }
 
     // -------------------------
-    // UC3: Centralized Inventory
+    // UC3: Room Inventory
     // -------------------------
 
     static class RoomInventory {
 
         private HashMap<String, Integer> inventory;
 
-        // Constructor initializes availability
         public RoomInventory() {
             inventory = new HashMap<>();
 
@@ -92,22 +88,42 @@ public class Main {
             inventory.put("Suite Room", 2);
         }
 
-        // Get availability of a room type
         public int getAvailability(String roomType) {
             return inventory.getOrDefault(roomType, 0);
         }
 
-        // Update availability
-        public void updateAvailability(String roomType, int newCount) {
-            inventory.put(roomType, newCount);
-        }
-
-        // Display full inventory
         public void displayInventory() {
-            System.out.println("\nCurrent Room Inventory:");
+
+            System.out.println("\nCurrent Inventory:");
 
             for (Map.Entry<String, Integer> entry : inventory.entrySet()) {
                 System.out.println(entry.getKey() + " → Available: " + entry.getValue());
+            }
+        }
+    }
+
+    // -------------------------
+    // UC4: Search Service
+    // -------------------------
+
+    static class SearchService {
+
+        public void searchAvailableRooms(RoomInventory inventory, Room[] rooms) {
+
+            System.out.println("\nAvailable Rooms for Guests:\n");
+
+            for (Room room : rooms) {
+
+                int available = inventory.getAvailability(room.getRoomType());
+
+                // Validation: show only available rooms
+                if (available > 0) {
+
+                    System.out.println(room.getRoomType());
+                    room.displayDetails();
+                    System.out.println("Available: " + available);
+                    System.out.println();
+                }
             }
         }
     }
@@ -118,39 +134,27 @@ public class Main {
 
     public static void main(String[] args) {
 
-        // UC1: Welcome Message
+        // UC1
         System.out.println("Welcome to the Hotel Booking System");
         System.out.println("Application: Hotel Booking System");
-        System.out.println("Version: v1.0");
-        System.out.println("Application started successfully.\n");
+        System.out.println("Version: v1.0\n");
 
-        // UC2: Room objects
+        // UC2 room objects
         Room single = new SingleRoom();
         Room doubleRoom = new DoubleRoom();
         Room suite = new SuiteRoom();
 
-        System.out.println("Room Types:\n");
+        Room[] rooms = {single, doubleRoom, suite};
 
-        System.out.println(single.getRoomType());
-        single.displayDetails();
-        System.out.println();
-
-        System.out.println(doubleRoom.getRoomType());
-        doubleRoom.displayDetails();
-        System.out.println();
-
-        System.out.println(suite.getRoomType());
-        suite.displayDetails();
-
-        // UC3: Centralized inventory
+        // UC3 inventory
         RoomInventory inventory = new RoomInventory();
 
         inventory.displayInventory();
 
-        // Example update
-        System.out.println("\nUpdating inventory for Single Room...");
-        inventory.updateAvailability("Single Room", 4);
+        // UC4 search functionality
+        SearchService searchService = new SearchService();
 
-        inventory.displayInventory();
+        searchService.searchAvailableRooms(inventory, rooms);
+
     }
 }
