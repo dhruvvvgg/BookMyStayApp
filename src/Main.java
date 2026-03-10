@@ -1,18 +1,28 @@
 /**
  * Main
  *
- * UC1 + UC2 implementation for the Hotel Booking System.
- * Demonstrates abstraction, inheritance, polymorphism,
- * and simple availability variables.
+ * Hotel Booking Application
+ * Demonstrates room modeling and centralized inventory management.
+ *
+ * UC1: Application entry and welcome message
+ * UC2: Room abstraction and room types
+ * UC3: Centralized inventory using HashMap
  *
  * @author Dhruv
  * @version 1.0
  */
 
+import java.util.HashMap;
+import java.util.Map;
+
 public class Main {
 
-    // Abstract Room class
+    // -------------------------
+    // UC2: Abstract Room Model
+    // -------------------------
+
     static abstract class Room {
+
         protected int beds;
         protected double size;
         protected double price;
@@ -32,7 +42,6 @@ public class Main {
         public abstract String getRoomType();
     }
 
-    // Single Room
     static class SingleRoom extends Room {
 
         public SingleRoom() {
@@ -44,7 +53,6 @@ public class Main {
         }
     }
 
-    // Double Room
     static class DoubleRoom extends Room {
 
         public DoubleRoom() {
@@ -56,7 +64,6 @@ public class Main {
         }
     }
 
-    // Suite Room
     static class SuiteRoom extends Room {
 
         public SuiteRoom() {
@@ -68,37 +75,82 @@ public class Main {
         }
     }
 
+    // -------------------------
+    // UC3: Centralized Inventory
+    // -------------------------
+
+    static class RoomInventory {
+
+        private HashMap<String, Integer> inventory;
+
+        // Constructor initializes availability
+        public RoomInventory() {
+            inventory = new HashMap<>();
+
+            inventory.put("Single Room", 5);
+            inventory.put("Double Room", 3);
+            inventory.put("Suite Room", 2);
+        }
+
+        // Get availability of a room type
+        public int getAvailability(String roomType) {
+            return inventory.getOrDefault(roomType, 0);
+        }
+
+        // Update availability
+        public void updateAvailability(String roomType, int newCount) {
+            inventory.put(roomType, newCount);
+        }
+
+        // Display full inventory
+        public void displayInventory() {
+            System.out.println("\nCurrent Room Inventory:");
+
+            for (Map.Entry<String, Integer> entry : inventory.entrySet()) {
+                System.out.println(entry.getKey() + " → Available: " + entry.getValue());
+            }
+        }
+    }
+
+    // -------------------------
+    // Main Method
+    // -------------------------
+
     public static void main(String[] args) {
 
+        // UC1: Welcome Message
         System.out.println("Welcome to the Hotel Booking System");
         System.out.println("Application: Hotel Booking System");
-        System.out.println("Version: v1.0\n");
+        System.out.println("Version: v1.0");
+        System.out.println("Application started successfully.\n");
 
-        System.out.println("Available Room Types:\n");
-
-        // Create room objects (polymorphism)
+        // UC2: Room objects
         Room single = new SingleRoom();
         Room doubleRoom = new DoubleRoom();
         Room suite = new SuiteRoom();
 
-        // Static availability variables
-        int singleAvailability = 5;
-        int doubleAvailability = 3;
-        int suiteAvailability = 2;
+        System.out.println("Room Types:\n");
 
-        // Display details
         System.out.println(single.getRoomType());
         single.displayDetails();
-        System.out.println("Available: " + singleAvailability);
         System.out.println();
 
         System.out.println(doubleRoom.getRoomType());
         doubleRoom.displayDetails();
-        System.out.println("Available: " + doubleAvailability);
         System.out.println();
 
         System.out.println(suite.getRoomType());
         suite.displayDetails();
-        System.out.println("Available: " + suiteAvailability);
+
+        // UC3: Centralized inventory
+        RoomInventory inventory = new RoomInventory();
+
+        inventory.displayInventory();
+
+        // Example update
+        System.out.println("\nUpdating inventory for Single Room...");
+        inventory.updateAvailability("Single Room", 4);
+
+        inventory.displayInventory();
     }
 }
