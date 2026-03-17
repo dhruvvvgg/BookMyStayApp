@@ -61,6 +61,11 @@ public class Main {
             if (count > 0) inventory.put(roomType, count - 1);
         }
 
+        public void increaseAvailability(String roomType) {
+            int count = inventory.getOrDefault(roomType, 0);
+            inventory.put(roomType, count + 1);
+        }
+
         public void displayInventory() {
             System.out.println("\nCurrent Inventory:");
             for (Map.Entry<String, Integer> e : inventory.entrySet()) {
@@ -210,9 +215,26 @@ public class Main {
     // -------------------------
     static class BookingHistory {
         private List<Reservation> history = new ArrayList<>();
+        // maps reservation ID -> Reservation for UC10 lookup and cancellation
+        private Map<String, Reservation> idMap = new HashMap<>();
 
+        public void add(String reservationId, Reservation r) {
+            history.add(r);
+            idMap.put(reservationId, r);
+        }
+
+        // kept for backward compatibility with UC6 BookingService
         public void add(Reservation r) {
             history.add(r);
+        }
+
+        public Reservation getById(String reservationId) {
+            return idMap.get(reservationId);
+        }
+
+        public void remove(String reservationId) {
+            Reservation r = idMap.remove(reservationId);
+            if (r != null) history.remove(r);
         }
 
         public List<Reservation> getAll() {
@@ -268,6 +290,12 @@ public class Main {
     static class InventoryUnderflowException extends HotelBookingException {
         public InventoryUnderflowException(String roomType) {
             super("Cannot decrease inventory for \"" + roomType + "\": no rooms remaining.");
+        }
+    }
+
+    static class InvalidCancellationException extends HotelBookingException {
+        public InvalidCancellationException(String reservationId) {
+            super("Cancellation failed: reservation ID \"" + reservationId + "\" not found or already cancelled.");
         }
     }
 
@@ -329,7 +357,7 @@ public class Main {
 
                     String id = generateRoomId(roomType);
                     inventory.decreaseAvailability(roomType);
-                    history.add(r);
+                    history.add(id, r);
                     reservationIds.add(id);
 
                     System.out.println("Confirmed: " +
@@ -344,6 +372,53 @@ public class Main {
                 }
             }
             return reservationIds;
+        }
+    }
+
+    // -------------------------
+    // UC10: Cancellation Service
+    // -------------------------
+    static class CancellationService {
+
+        // Stack tracks released IDs in LIFO order for rollback
+        private Stack<String> rollbackStack = new Stack<>();
+
+        public void cancel(String reservationId,
+                           RoomInventory inventory,
+                           BookingHistory history) {
+
+            // validate: reservation must exist and not already be cancelled
+            Reservation r = history.getById(reservationId);
+            if (r == null) {
+                throw new InvalidCancellationException(reservationId);
+            }
+
+            String roomType = r.getRoomType();
+
+            // push ID onto rollback stack before mutating state
+            rollbackStack.push(reservationId);
+
+            // restore inventory count
+            inventory.increaseAvailability(roomType);
+
+            // remove from booking history
+            history.remove(reservationId);
+
+            System.out.println("Cancelled: " + r.getGuestName() +
+                    " -> " + roomType + " | ID: " + reservationId);
+        }
+
+        public void displayRollbackStack() {
+            System.out.println("\nRollback Stack (most recent cancellation on top):");
+            if (rollbackStack.isEmpty()) {
+                System.out.println("  (empty)");
+            } else {
+                Stack<String> temp = new Stack<>();
+                temp.addAll(rollbackStack);
+                while (!temp.isEmpty()) {
+                    System.out.println("  " + temp.pop());
+                }
+            }
         }
     }
 
@@ -401,8 +476,45 @@ public class Main {
             manager.displayServices(ids.get(1));
         }
 
-        // UC8 reporting
+        // UC8 reporting (before cancellations)
         BookingReportService report = new BookingReportService();
+        report.printAll(history.getAll());
+        report.summary(history.getAll());
+
+        // UC10: Cancellation
+        System.out.println("\n--- UC10: Cancellations ---");
+        CancellationService cancellationService = new CancellationService();
+
+        // valid cancellation
+        if (ids.size() > 0) {
+            try {
+                cancellationService.cancel(ids.get(0), inventory, history);
+            } catch (HotelBookingException e) {
+                System.out.println("Cancellation Error: " + e.getMessage());
+            }
+        }
+
+        // duplicate cancellation — same ID, should be rejected
+        if (ids.size() > 0) {
+            try {
+                cancellationService.cancel(ids.get(0), inventory, history);
+            } catch (HotelBookingException e) {
+                System.out.println("Cancellation Error: " + e.getMessage());
+            }
+        }
+
+        // non-existent ID
+        try {
+            cancellationService.cancel("XYZ-999", inventory, history);
+        } catch (HotelBookingException e) {
+            System.out.println("Cancellation Error: " + e.getMessage());
+        }
+
+        cancellationService.displayRollbackStack();
+        inventory.displayInventory();
+
+        // UC8 reporting (after cancellations)
+        System.out.println("\n--- Booking History After Cancellations ---");
         report.printAll(history.getAll());
         report.summary(history.getAll());
     }
