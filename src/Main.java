@@ -52,16 +52,16 @@ public class Main {
             inventory.put("Suite Room", 2);
         }
 
-        public int getAvailability(String roomType) {
+        public synchronized int getAvailability(String roomType) {
             return inventory.getOrDefault(roomType, 0);
         }
 
-        public void decreaseAvailability(String roomType) {
+        public synchronized void decreaseAvailability(String roomType) {
             int count = inventory.getOrDefault(roomType, 0);
             if (count > 0) inventory.put(roomType, count - 1);
         }
 
-        public void increaseAvailability(String roomType) {
+        public synchronized void increaseAvailability(String roomType) {
             int count = inventory.getOrDefault(roomType, 0);
             inventory.put(roomType, count + 1);
         }
@@ -218,27 +218,27 @@ public class Main {
         // maps reservation ID -> Reservation for UC10 lookup and cancellation
         private Map<String, Reservation> idMap = new HashMap<>();
 
-        public void add(String reservationId, Reservation r) {
+        public synchronized void add(String reservationId, Reservation r) {
             history.add(r);
             idMap.put(reservationId, r);
         }
 
         // kept for backward compatibility with UC6 BookingService
-        public void add(Reservation r) {
+        public synchronized void add(Reservation r) {
             history.add(r);
         }
 
-        public Reservation getById(String reservationId) {
+        public synchronized Reservation getById(String reservationId) {
             return idMap.get(reservationId);
         }
 
-        public void remove(String reservationId) {
+        public synchronized void remove(String reservationId) {
             Reservation r = idMap.remove(reservationId);
             if (r != null) history.remove(r);
         }
 
-        public List<Reservation> getAll() {
-            return history;
+        public synchronized List<Reservation> getAll() {
+            return new ArrayList<>(history);
         }
     }
 
@@ -423,6 +423,89 @@ public class Main {
     }
 
     // -------------------------
+    // UC11: Shared Booking Queue
+    // -------------------------
+    static class SharedBookingQueue {
+
+        private final Queue<Reservation> queue = new LinkedList<>();
+
+        public synchronized void addRequest(Reservation r) {
+            queue.add(r);
+        }
+
+        // returns null when queue is empty — threads use this to know when to stop
+        public synchronized Reservation pollRequest() {
+            return queue.poll();
+        }
+
+        public synchronized boolean isEmpty() {
+            return queue.isEmpty();
+        }
+    }
+
+    // -------------------------
+    // UC11: Concurrent Booking Processor
+    // -------------------------
+    static class ConcurrentBookingProcessor implements Runnable {
+
+        private final SharedBookingQueue sharedQueue;
+        private final RoomInventory inventory;
+        private final BookingHistory history;
+        private final List<String> confirmedIds;
+        private final int threadId;
+        private static int idCounter = 0;
+
+        public ConcurrentBookingProcessor(SharedBookingQueue sharedQueue,
+                                          RoomInventory inventory,
+                                          BookingHistory history,
+                                          List<String> confirmedIds,
+                                          int threadId) {
+            this.sharedQueue = sharedQueue;
+            this.inventory = inventory;
+            this.history = history;
+            this.confirmedIds = confirmedIds;
+            this.threadId = threadId;
+        }
+
+        @Override
+        public void run() {
+            while (true) {
+                Reservation r;
+
+                // critical section: poll and allocate must be atomic together
+                // to prevent two threads reading the same availability count
+                synchronized (inventory) {
+                    r = sharedQueue.pollRequest();
+                    if (r == null) break; // queue exhausted
+
+                    String roomType = r.getRoomType();
+
+                    if (inventory.getAvailability(roomType) > 0) {
+                        String id = generateId(roomType);
+                        inventory.decreaseAvailability(roomType);
+                        history.add(id, r);
+
+                        synchronized (confirmedIds) {
+                            confirmedIds.add(id);
+                        }
+
+                        System.out.println("[Thread-" + threadId + "] Confirmed: " +
+                                r.getGuestName() + " -> " + roomType + " | ID: " + id);
+                    } else {
+                        System.out.println("[Thread-" + threadId + "] No availability: " +
+                                r.getGuestName() + " -> " + roomType);
+                    }
+                }
+            }
+        }
+
+        private static synchronized String generateId(String roomType) {
+            String prefix = roomType.substring(0, 3).toUpperCase();
+            return prefix + "-C" + (++idCounter);
+        }
+    }
+
+    // -------------------------
     // Main
     // -------------------------
     public static void main(String[] args) {
@@ -517,5 +600,56 @@ public class Main {
         System.out.println("\n--- Booking History After Cancellations ---");
         report.printAll(history.getAll());
         report.summary(history.getAll());
+
+        // -------------------------------------------------------
+        // UC11: Concurrent Booking Simulation
+        // -------------------------------------------------------
+        System.out.println("\n--- UC11: Concurrent Booking Simulation ---");
+
+        // fresh inventory and history for the concurrent scenario
+        RoomInventory concurrentInventory = new RoomInventory();
+        BookingHistory concurrentHistory = new BookingHistory();
+        List<String> concurrentIds = Collections.synchronizedList(new ArrayList<>());
+
+        // shared queue loaded with 10 guests competing for 10 total rooms (5+3+2)
+        SharedBookingQueue sharedQueue = new SharedBookingQueue();
+        String[] roomTypes = {"Single Room", "Double Room", "Suite Room"};
+        for (int i = 1; i <= 10; i++) {
+            String type = roomTypes[i % roomTypes.length];
+            sharedQueue.addRequest(new Reservation("Guest-" + i, type));
+        }
+        // 2 extra requests that will be denied due to full inventory
+        sharedQueue.addRequest(new Reservation("Guest-11", "Single Room"));
+        sharedQueue.addRequest(new Reservation("Guest-12", "Suite Room"));
+
+        // 4 threads compete to process the shared queue
+        int numThreads = 4;
+        Thread[] threads = new Thread[numThreads];
+        for (int i = 0; i < numThreads; i++) {
+            threads[i] = new Thread(new ConcurrentBookingProcessor(
+                    sharedQueue, concurrentInventory, concurrentHistory, concurrentIds, i + 1));
+        }
+
+        // start all threads simultaneously
+        for (Thread t : threads) t.start();
+
+        // wait for all threads to finish before reading results
+        for (Thread t : threads) {
+            try {
+                t.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        System.out.println("\nConcurrent booking complete.");
+        concurrentInventory.displayInventory();
+
+        System.out.println("\nConfirmed IDs: " + concurrentIds);
+        System.out.println("Total confirmed: " + concurrentIds.size());
+
+        BookingReportService concurrentReport = new BookingReportService();
+        concurrentReport.printAll(concurrentHistory.getAll());
+        concurrentReport.summary(concurrentHistory.getAll());
     }
 }
