@@ -72,6 +72,14 @@ public class Main {
                 System.out.println(e.getKey() + " -> Available: " + e.getValue());
             }
         }
+
+        public synchronized Map<String, Integer> getInventoryMap() {
+            return new HashMap<>(inventory);
+        }
+
+        public synchronized void setAvailability(String roomType, int count) {
+            inventory.put(roomType, count);
+        }
     }
 
     // -------------------------
@@ -97,14 +105,25 @@ public class Main {
     static class Reservation {
         private String guestName;
         private String roomType;
+        private String reservationId;
 
+        // original constructor — used by UC2–UC10 flows
         public Reservation(String guestName, String roomType) {
+            this.guestName = guestName;
+            this.roomType = roomType;
+        }
+
+        // constructor with ID — used by UC12 deserialization
+        public Reservation(String reservationId, String guestName, String roomType) {
+            this.reservationId = reservationId;
             this.guestName = guestName;
             this.roomType = roomType;
         }
 
         public String getGuestName() { return guestName; }
         public String getRoomType() { return roomType; }
+        public String getReservationId() { return reservationId; }
+        public void setReservationId(String reservationId) { this.reservationId = reservationId; }
     }
 
     // -------------------------
@@ -219,6 +238,7 @@ public class Main {
         private Map<String, Reservation> idMap = new HashMap<>();
 
         public synchronized void add(String reservationId, Reservation r) {
+            r.setReservationId(reservationId);
             history.add(r);
             idMap.put(reservationId, r);
         }
@@ -239,6 +259,10 @@ public class Main {
 
         public synchronized List<Reservation> getAll() {
             return new ArrayList<>(history);
+        }
+
+        public synchronized Map<String, Reservation> getIdMap() {
+            return new HashMap<>(idMap);
         }
     }
 
@@ -506,6 +530,101 @@ public class Main {
     }
 
     // -------------------------
+    // UC12: Persistence Service
+    // -------------------------
+    static class PersistenceService {
+
+        private static final String INVENTORY_FILE = "inventory.dat";
+        private static final String BOOKINGS_FILE  = "bookings.dat";
+
+        // serializes inventory and booking history to files
+        public void save(RoomInventory inventory, BookingHistory history) {
+            saveInventory(inventory);
+            saveBookings(history);
+        }
+
+        private void saveInventory(RoomInventory inventory) {
+            try (java.io.PrintWriter pw =
+                         new java.io.PrintWriter(new java.io.FileWriter(INVENTORY_FILE))) {
+                for (Map.Entry<String, Integer> e : inventory.getInventoryMap().entrySet()) {
+                    pw.println(e.getKey() + "=" + e.getValue());
+                }
+                System.out.println("[Persistence] Inventory saved to " + INVENTORY_FILE);
+            } catch (java.io.IOException e) {
+                System.out.println("[Persistence] Error saving inventory: " + e.getMessage());
+            }
+        }
+
+        private void saveBookings(BookingHistory history) {
+            try (java.io.PrintWriter pw =
+                         new java.io.PrintWriter(new java.io.FileWriter(BOOKINGS_FILE))) {
+                for (Map.Entry<String, Reservation> e : history.getIdMap().entrySet()) {
+                    String id = e.getKey();
+                    Reservation r = e.getValue();
+                    // format: reservationId|guestName|roomType
+                    pw.println(id + "|" + r.getGuestName() + "|" + r.getRoomType());
+                }
+                System.out.println("[Persistence] Bookings saved to " + BOOKINGS_FILE);
+            } catch (java.io.IOException e) {
+                System.out.println("[Persistence] Error saving bookings: " + e.getMessage());
+            }
+        }
+
+        // restores inventory from file into the provided RoomInventory object
+        public void loadInventory(RoomInventory inventory) {
+            java.io.File file = new java.io.File(INVENTORY_FILE);
+            if (!file.exists()) {
+                System.out.println("[Persistence] No inventory file found. Starting with default inventory.");
+                return;
+            }
+            try (java.util.Scanner sc = new java.util.Scanner(file)) {
+                while (sc.hasNextLine()) {
+                    String line = sc.nextLine().trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split("=", 2);
+                    if (parts.length != 2) {
+                        System.out.println("[Persistence] Skipping malformed inventory line: " + line);
+                        continue;
+                    }
+                    try {
+                        inventory.setAvailability(parts[0], Integer.parseInt(parts[1].trim()));
+                    } catch (NumberFormatException e) {
+                        System.out.println("[Persistence] Skipping corrupt inventory entry: " + line);
+                    }
+                }
+                System.out.println("[Persistence] Inventory restored from " + INVENTORY_FILE);
+            } catch (java.io.IOException e) {
+                System.out.println("[Persistence] Error loading inventory: " + e.getMessage());
+            }
+        }
+
+        // restores booking history from file into the provided BookingHistory object
+        public void loadBookings(BookingHistory history) {
+            java.io.File file = new java.io.File(BOOKINGS_FILE);
+            if (!file.exists()) {
+                System.out.println("[Persistence] No bookings file found. Starting with empty history.");
+                return;
+            }
+            try (java.util.Scanner sc = new java.util.Scanner(file)) {
+                while (sc.hasNextLine()) {
+                    String line = sc.nextLine().trim();
+                    if (line.isEmpty()) continue;
+                    String[] parts = line.split("\\|", 3);
+                    if (parts.length != 3) {
+                        System.out.println("[Persistence] Skipping malformed booking line: " + line);
+                        continue;
+                    }
+                    Reservation r = new Reservation(parts[0], parts[1], parts[2]);
+                    history.add(parts[0], r);
+                }
+                System.out.println("[Persistence] Bookings restored from " + BOOKINGS_FILE);
+            } catch (java.io.IOException e) {
+                System.out.println("[Persistence] Error loading bookings: " + e.getMessage());
+            }
+        }
+    }
+
+    // -------------------------
     // Main
     // -------------------------
     public static void main(String[] args) {
@@ -651,5 +770,32 @@ public class Main {
         BookingReportService concurrentReport = new BookingReportService();
         concurrentReport.printAll(concurrentHistory.getAll());
         concurrentReport.summary(concurrentHistory.getAll());
+
+        // -------------------------------------------------------
+        // UC12: Persistence — Save and Restore
+        // -------------------------------------------------------
+        System.out.println("\n--- UC12: Persistence ---");
+
+        PersistenceService persistenceService = new PersistenceService();
+
+        // save the state from the main UC2–UC10 flow (inventory + history)
+        System.out.println("\n[Shutdown] Saving system state...");
+        persistenceService.save(inventory, history);
+
+        // simulate a restart: create fresh empty objects
+        System.out.println("\n[Startup] Restoring system state...");
+        RoomInventory restoredInventory = new RoomInventory();
+        BookingHistory restoredHistory = new BookingHistory();
+
+        persistenceService.loadInventory(restoredInventory);
+        persistenceService.loadBookings(restoredHistory);
+
+        // verify restored state matches what was saved
+        System.out.println("\n[Restored State]");
+        restoredInventory.displayInventory();
+
+        BookingReportService restoredReport = new BookingReportService();
+        restoredReport.printAll(restoredHistory.getAll());
+        restoredReport.summary(restoredHistory.getAll());
     }
 }
