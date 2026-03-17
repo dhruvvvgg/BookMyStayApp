@@ -64,7 +64,7 @@ public class Main {
         public void displayInventory() {
             System.out.println("\nCurrent Inventory:");
             for (Map.Entry<String, Integer> e : inventory.entrySet()) {
-                System.out.println(e.getKey() + " → Available: " + e.getValue());
+                System.out.println(e.getKey() + " -> Available: " + e.getValue());
             }
         }
     }
@@ -120,7 +120,7 @@ public class Main {
     // -------------------------
     static class BookingService {
 
-        private Set<String> usedRoomIds = new HashSet<>();
+        protected Set<String> usedRoomIds = new HashSet<>();
 
         public List<String> processBookings(BookingRequestQueue requestQueue,
                                             RoomInventory inventory,
@@ -149,7 +149,7 @@ public class Main {
                     reservationIds.add(id);
 
                     System.out.println("Confirmed: " +
-                            r.getGuestName() + " → " + roomType +
+                            r.getGuestName() + " -> " + roomType +
                             " | ID: " + id);
 
                 } else {
@@ -159,9 +159,11 @@ public class Main {
             return reservationIds;
         }
 
-        private String generateRoomId(String roomType) {
-            String prefix = roomType.substring(0,3).toUpperCase();
-            return prefix + "-" + (usedRoomIds.size() + 1);
+        protected String generateRoomId(String roomType) {
+            String prefix = roomType.substring(0, 3).toUpperCase();
+            String id = prefix + "-" + (usedRoomIds.size() + 1);
+            usedRoomIds.add(id);
+            return id;
         }
     }
 
@@ -223,7 +225,7 @@ public class Main {
         public void printAll(List<Reservation> history) {
             System.out.println("\nBooking History:");
             for (Reservation r : history) {
-                System.out.println(r.getGuestName() + " → " + r.getRoomType());
+                System.out.println(r.getGuestName() + " -> " + r.getRoomType());
             }
         }
 
@@ -239,6 +241,109 @@ public class Main {
             for (String type : count.keySet()) {
                 System.out.println(type + ": " + count.get(type));
             }
+        }
+    }
+
+    // -------------------------
+    // UC9: Custom Exceptions
+    // -------------------------
+    static class HotelBookingException extends RuntimeException {
+        public HotelBookingException(String message) {
+            super(message);
+        }
+    }
+
+    static class InvalidRoomTypeException extends HotelBookingException {
+        public InvalidRoomTypeException(String roomType) {
+            super("Invalid room type: \"" + roomType + "\". Must be Single Room, Double Room, or Suite Room.");
+        }
+    }
+
+    static class InvalidGuestNameException extends HotelBookingException {
+        public InvalidGuestNameException() {
+            super("Guest name cannot be null or blank.");
+        }
+    }
+
+    static class InventoryUnderflowException extends HotelBookingException {
+        public InventoryUnderflowException(String roomType) {
+            super("Cannot decrease inventory for \"" + roomType + "\": no rooms remaining.");
+        }
+    }
+
+    // -------------------------
+    // UC9: Booking Validator
+    // -------------------------
+    static class BookingValidator {
+
+        private static final Set<String> VALID_ROOM_TYPES = new HashSet<>(
+                Arrays.asList("Single Room", "Double Room", "Suite Room")
+        );
+
+        public void validateReservation(Reservation r) {
+            if (r.getGuestName() == null || r.getGuestName().trim().isEmpty()) {
+                throw new InvalidGuestNameException();
+            }
+            if (!VALID_ROOM_TYPES.contains(r.getRoomType())) {
+                throw new InvalidRoomTypeException(r.getRoomType());
+            }
+        }
+
+        public void validateInventoryBeforeDecrease(String roomType, int currentCount) {
+            if (currentCount <= 0) {
+                throw new InventoryUnderflowException(roomType);
+            }
+        }
+    }
+
+    // -------------------------
+    // UC9: Validated Booking Service
+    // -------------------------
+    static class ValidatedBookingService extends BookingService {
+
+        private BookingValidator validator = new BookingValidator();
+
+        @Override
+        public List<String> processBookings(BookingRequestQueue requestQueue,
+                                            RoomInventory inventory,
+                                            BookingHistory history) {
+
+            List<String> reservationIds = new ArrayList<>();
+            Queue<Reservation> queue = requestQueue.getQueue();
+
+            System.out.println("\nProcessing Bookings (with Validation)...\n");
+
+            while (!queue.isEmpty()) {
+
+                Reservation r = queue.poll();
+
+                try {
+                    // validate input before touching any state
+                    validator.validateReservation(r);
+
+                    String roomType = r.getRoomType();
+
+                    // validate inventory state before decrease
+                    validator.validateInventoryBeforeDecrease(
+                            roomType, inventory.getAvailability(roomType));
+
+                    String id = generateRoomId(roomType);
+                    inventory.decreaseAvailability(roomType);
+                    history.add(r);
+                    reservationIds.add(id);
+
+                    System.out.println("Confirmed: " +
+                            r.getGuestName() + " -> " + roomType +
+                            " | ID: " + id);
+
+                } catch (HotelBookingException e) {
+                    // graceful failure: log message and continue safely
+                    String name = (r.getGuestName() != null && !r.getGuestName().trim().isEmpty())
+                            ? r.getGuestName() : "Unknown Guest";
+                    System.out.println("Validation Error [" + name + "]: " + e.getMessage());
+                }
+            }
+            return reservationIds;
         }
     }
 
@@ -259,13 +364,21 @@ public class Main {
         new SearchService().searchAvailableRooms(inventory, rooms);
 
         BookingRequestQueue queue = new BookingRequestQueue();
+
+        // Valid requests
         queue.addRequest(new Reservation("Alice", "Single Room"));
         queue.addRequest(new Reservation("Bob", "Suite Room"));
         queue.addRequest(new Reservation("Charlie", "Double Room"));
 
+        // UC9: Invalid requests — rejected gracefully
+        queue.addRequest(new Reservation("Dave", "Penthouse Suite")); // invalid room type
+        queue.addRequest(new Reservation("", "Single Room"));          // blank guest name
+        queue.addRequest(new Reservation(null, "Double Room"));        // null guest name
+
         BookingHistory history = new BookingHistory();
 
-        BookingService service = new BookingService();
+        // UC9: ValidatedBookingService replaces BookingService
+        ValidatedBookingService service = new ValidatedBookingService();
         List<String> ids = service.processBookings(queue, inventory, history);
 
         inventory.displayInventory();
